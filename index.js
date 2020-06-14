@@ -76,7 +76,10 @@ const appendDbTaskStatuses = _.partialRight(appendToData, 'dbTaskStatuses', ({ d
     .uniq()
     .value()
 ));
-const appendUsers = _.partialRight(appendToData, 'users', ({ dbUsers }) => [...dbUsers.map(_.clone)]);
+const appendUsers = _.partialRight(appendToData, 'users', ({ dbUsers }) => dbUsers.map((user) => ({
+  ...user,
+  type: 'User',
+})));
 const appendTasks = _.partialRight(appendToData, 'tasks', ({ dbTasks }) => (
   dbTasks.map((task) => {
     const parentId = task.parentId === null ? task.owner : task.parentId;
@@ -90,6 +93,7 @@ const appendTasks = _.partialRight(appendToData, 'tasks', ({ dbTasks }) => (
             'owner',
             'rank',
           ]),
+          type: 'Divider',
           parentId,
           isDivider,
         }
@@ -101,6 +105,7 @@ const appendTasks = _.partialRight(appendToData, 'tasks', ({ dbTasks }) => (
             'notes',
             'rank',
           ]),
+          type: 'Todo',
           parentId,
           isChecked: task.status === 'Checked',
           isRoot: task.status === 'Root',
@@ -147,6 +152,43 @@ const appendTrees = _.partialRight(appendToData, 'trees', ({ users, tasksByParen
 
   return _.keyBy(users, 'id');
 });
+const toPrettyTree = (treeNode) => {
+  const {
+    id: originalId,
+    type,
+    title,
+    notes,
+    tasks,
+    isChecked,
+  } = treeNode;
+
+  const prettyTasks = _(tasks).map(toPrettyTree).fromPairs().value();
+
+  const idSuffix = type === 'Todo' ? ` [${isChecked ? 'x' : ' '}]` : '';
+  const id = `${_.padStart(originalId, 6, '_')}${idSuffix}`;
+
+  const titleAndNotes = notes ? `${title}|${notes}` : title;
+
+  switch (type) {
+    case 'Divider': return [id, '-------------------------'];
+    case 'Todo': return (
+      tasks.length === 0
+        ? [id, titleAndNotes]
+        : [`${id} : '${titleAndNotes}'`, prettyTasks]
+    );
+    case 'User': return [id, prettyTasks];
+    default: throw new Error(`Unknown type ${type}`);
+  }
+};
+const appendPrettyTrees = _.partialRight(
+  appendToData,
+  'prettyTrees',
+  ({ trees }) => _(trees)
+    .values()
+    .map((user) => toPrettyTree(user))
+    .fromPairs()
+    .value(),
+);
 
 const dataToFileTuples = (data) => _.toPairs(data);
 const writeData = ([filename, data]) => {
@@ -165,6 +207,7 @@ getAllItems()
   .then(appendTasksByParentId)
   .then(replaceRootTasksWithUsers)
   .then(appendTrees)
+  .then(appendPrettyTrees)
   .tap(() => { console.log(); })
   .then(dataToFileTuples)
   .map(writeData)
