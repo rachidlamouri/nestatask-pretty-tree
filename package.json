@@ -3,8 +3,13 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "bluebird": "3.7.2",
+    "dotenv": "8.2.0",
     "eslint": "7.2.0",
     "eslint-config-airbnb-base": "14.2.0",
-    "eslint-plugin-import": "2.21.2"
+    "eslint-plugin-import": "2.21.2",
+    "lodash": "4.17.15",
+    "mysql": "2.18.1",
+    "rimraf": "3.0.2"
   }
 }
