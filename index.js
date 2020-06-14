@@ -65,21 +65,108 @@ const appendToData = (data, key, fn) => {
   return data;
 };
 
-const appendItems = _.partialRight(appendToData, 'items', ({ dbUsers, dbTasks }) => [...dbUsers, ...dbTasks]);
+const modifyData = (data, fn) => {
+  fn(data); // eslint-disable-line no-param-reassign
+  return data;
+};
+
+const appendDbTaskStatuses = _.partialRight(appendToData, 'dbTaskStatuses', ({ dbTasks }) => (
+  _(dbTasks)
+    .map('status')
+    .uniq()
+    .value()
+));
+const appendUsers = _.partialRight(appendToData, 'users', ({ dbUsers }) => [...dbUsers.map(_.clone)]);
+const appendTasks = _.partialRight(appendToData, 'tasks', ({ dbTasks }) => (
+  dbTasks.map((task) => {
+    const parentId = task.parentId === null ? task.owner : task.parentId;
+    const isDivider = task.status === 'Divider';
+
+    return (
+      isDivider
+        ? {
+          ..._.pick(task, [
+            'id',
+            'owner',
+            'rank',
+          ]),
+          parentId,
+          isDivider,
+        }
+        : {
+          ..._.pick(task, [
+            'id',
+            'owner',
+            'title',
+            'notes',
+            'rank',
+          ]),
+          parentId,
+          isChecked: task.status === 'Checked',
+          isRoot: task.status === 'Root',
+        }
+    );
+  })
+));
+const appendRootTasks = _.partialRight(appendToData, 'rootTasks', ({ tasks }) => _.filter(tasks, 'isRoot'));
+const appendItems = _.partialRight(appendToData, 'items', ({ users, tasks }) => [...users, ...tasks]);
 const appendItemsById = _.partialRight(appendToData, 'itemsById', ({ items }) => _.keyBy(items, 'id'));
+const appendTasksByParentId = _.partialRight(appendToData, 'tasksByParentId', ({ tasks }) => (
+  _(tasks)
+    .groupBy('parentId')
+    .mapValues((childTasks) => _.sortBy(childTasks, 'rank'))
+    .value()
+));
+const replaceRootTasksWithUsers = _.partialRight(modifyData, ({ users, tasksByParentId }) => {
+  users.forEach((user) => {
+    const [rootTask] = tasksByParentId[user.id];
+    const rootTaskChildren = tasksByParentId[rootTask.id];
+
+    /* eslint-disable no-param-reassign */
+    rootTaskChildren.forEach((task) => {
+      task.parentId = user.id;
+    });
+
+    delete tasksByParentId[rootTask.id];
+    tasksByParentId[user.id] = rootTaskChildren;
+    /* eslint-enable no-param-reassign */
+  });
+});
+const appendTasksToParent = (parent, tasksByParentId) => {
+  parent.tasks = tasksByParentId[parent.id] || []; // eslint-disable-line no-param-reassign
+  parent.tasks.forEach((task) => {
+    if (task.isDivider) return;
+
+    appendTasksToParent(task, tasksByParentId);
+  });
+};
+const appendTrees = _.partialRight(appendToData, 'trees', ({ users, tasksByParentId }) => {
+  users.forEach((user) => {
+    appendTasksToParent(user, tasksByParentId);
+  });
+
+  return _.keyBy(users, 'id');
+});
 
 const dataToFileTuples = (data) => _.toPairs(data);
 const writeData = ([filename, data]) => {
   const filepath = `${OUTPUT}${filename}.json`;
-  console.info(`Writing: ${filepath}`);
+  console.log(`Writing: ${filepath}`);
   fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
 };
 
 getAllItems()
+  .then(appendDbTaskStatuses)
+  .then(appendUsers)
+  .then(appendTasks)
+  .then(appendRootTasks)
   .then(appendItems)
   .then(appendItemsById)
-  .then(dataToFileTuples)
+  .then(appendTasksByParentId)
+  .then(replaceRootTasksWithUsers)
+  .then(appendTrees)
   .tap(() => { console.log(); })
+  .then(dataToFileTuples)
   .map(writeData)
   .catch(console.error)
   .finally(() => {
